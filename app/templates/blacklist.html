@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}IP Blacklist - PyPG Mail{% endblock %}
+
+{% block content %}
+<div class="p-6">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">IP Blacklist</h1>
+        <a href="{{ url_for('emails.inbox') }}" class="text-blue-600 hover:text-blue-800">
+            <i class="fas fa-arrow-left mr-2"></i>Back to Inbox
+        </a>
+    </div>
+    
+    <!-- Statistics -->
+    {% if stats %}
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">Total Entries</div>
+            <div class="text-2xl font-bold">{{ stats.total_entries }}</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">Active</div>
+            <div class="text-2xl font-bold text-red-600">{{ stats.active_entries }}</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">Expired</div>
+            <div class="text-2xl font-bold text-gray-600">{{ stats.expired_entries }}</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">Manual Entries</div>
+            <div class="text-2xl font-bold">
+                {{ stats.by_source.manual if stats.by_source else 0 }}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Check IP -->
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Check IP Address</h2>
+        <form action="{{ url_for('blacklist.check_ip') }}" method="get" class="flex gap-4">
+            <input type="text" name="ip" placeholder="192.168.1.1" required
+                   class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button type="submit" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                <i class="fas fa-search mr-2"></i>Check
+            </button>
+        </form>
+    </div>
+    
+    <!-- Filter -->
+    <div class="bg-white rounded-lg shadow p-4 mb-6">
+        <div class="flex items-center gap-4">
+            <span class="text-gray-600 font-medium">Filter by source:</span>
+            <a href="{{ url_for('blacklist.list_blacklist') }}" 
+               class="px-3 py-1 rounded-lg {% if not current_source %}bg-blue-100 text-blue-800{% else %}hover:bg-gray-100{% endif %}">All</a>
+            <a href="{{ url_for('blacklist.list_blacklist', source='manual') }}" 
+               class="px-3 py-1 rounded-lg {% if current_source == 'manual' %}bg-blue-100 text-blue-800{% else %}hover:bg-gray-100{% endif %}">Manual</a>
+            <a href="{{ url_for('blacklist.list_blacklist', source='auto_spf_fail') }}" 
+               class="px-3 py-1 rounded-lg {% if current_source == 'auto_spf_fail' %}bg-blue-100 text-blue-800{% else %}hover:bg-gray-100{% endif %}">SPF Fail</a>
+            <a href="{{ url_for('blacklist.list_blacklist', source='auto_rate_limit') }}" 
+               class="px-3 py-1 rounded-lg {% if current_source == 'auto_rate_limit' %}bg-blue-100 text-blue-800{% else %}hover:bg-gray-100{% endif %}">Rate Limit</a>
+            <a href="{{ url_for('blacklist.list_blacklist', source='dnsbl') }}" 
+               class="px-3 py-1 rounded-lg {% if current_source == 'dnsbl' %}bg-blue-100 text-blue-800{% else %}hover:bg-gray-100{% endif %}">DNSBL</a>
+        </div>
+    </div>
+    
+    <!-- Blacklist Entries -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 class="text-lg font-semibold">Blacklisted IPs</h2>
+            <span class="text-sm text-gray-500">{{ total }} entries</span>
+        </div>
+        
+        {% if entries %}
+            <div class="divide-y divide-gray-200">
+                {% for entry in entries %}
+                <div class="flex items-center justify-between px-6 py-4 hover:bg-gray-50">
+                    <div class="flex items-center space-x-4">
+                        <i class="fas fa-ban text-red-500"></i>
+                        <div>
+                            <div class="font-medium text-gray-900">{{ entry.ip_address }}</div>
+                            <div class="text-sm text-gray-500">{{ entry.reason or 'No reason given' }}</div>
+                            <div class="text-xs text-gray-400">
+                                Source: {{ entry.source }} | 
+                                Hits: {{ entry.hit_count }} | 
+                                Added: {{ entry.created_at[:10] if entry.created_at else 'Unknown' }}
+                                {% if entry.expires_at %}
+                                    | Expires: {{ entry.expires_at[:10] }}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {% if entry.source == 'manual' %}
+                    <form action="{{ url_for('blacklist.remove_ip', ip_id=entry.id) }}" method="post"
+                          onsubmit="return confirm('Remove this IP from blacklist?')" class="inline">
+                        <button type="submit" class="px-4 py-2 text-green-600 hover:bg-green-50 rounded-lg">
+                            <i class="fas fa-check mr-2"></i>Remove
+                        </button>
+                    </form>
+                    {% else %}
+                    <span class="text-xs text-gray-400">Auto-added</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            
+            <!-- Pagination -->
+            {% if total > limit %}
+            <div class="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+                {% if page > 1 %}
+                    <a href="?{% if current_source %}source={{ current_source }}&{% endif %}page={{ page - 1 }}" 
+                       class="text-blue-600 hover:text-blue-800">
+                        <i class="fas fa-chevron-left mr-1"></i> Previous
+                    </a>
+                {% else %}
+                    <span></span>
+                {% endif %}
+                
+                <span class="text-gray-600">Page {{ page }}</span>
+                
+                {% if entries | length == limit %}
+                    <a href="?{% if current_source %}source={{ current_source }}&{% endif %}page={{ page + 1 }}" 
+                       class="text-blue-600 hover:text-blue-800">
+                        Next <i class="fas fa-chevron-right ml-1"></i>
+                    </a>
+                {% else %}
+                    <span></span>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% else %}
+            <div class="p-8 text-center text-gray-500">
+                <i class="fas fa-shield-alt text-6xl mb-4 text-gray-300"></i>
+                <p>No blacklisted IPs found</p>
+                <p class="text-sm mt-2">This is a good sign! No IPs are currently blocked</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,306 @@
+from flask import Blueprint, render_template, request, redirect, url_for, session, flash, jsonify
+from app.api_client import MailServerAPI, AuthenticationError, APIError, require_auth
+import bleach
+import re
+
+emails_bp = Blueprint('emails', __name__)
+api = MailServerAPI()
+
+ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'blockquote']
+ALLOWED_ATTRIBUTES = {'a': ['href', 'title']}
+
+def extract_sender_from_headers(headers):
+    """Extract sender email from email headers"""
+    if not headers:
+        return None
+    
+    # Normalize line endings and handle multiline headers
+    headers_normalized = headers.replace('\r\n', '\n').replace('\r', '\n')
+    
+    # Look for From: header - handle various formats:
+    # From: Name <email@domain.com>
+    # From: "Name" <email@domain.com>
+    # From: email@domain.com
+    # From: "Name"<email@domain.com> (no space)
+    from_match = re.search(r'From:\s*(?:"?([^"<\n]+)"?\s*)?<?([^>\s\n]+@[^>\s\n]+)>?', headers_normalized)
+    if from_match:
+        email = from_match.group(2).strip() if from_match.group(2) else None
+        name = from_match.group(1).strip() if from_match.group(1) else None
+        if email:
+            return {'email': email, 'name': name}
+    
+    # Try simpler pattern for just email anywhere in headers
+    email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', headers_normalized)
+    if email_match:
+        return {'email': email_match.group(0), 'name': None}
+    
+    return None
+
+@emails_bp.route('/')
+@require_auth
+def index():
+    return redirect(url_for('emails.inbox'))
+
+@emails_bp.route('/inbox')
+@require_auth
+def inbox():
+    try:
+        folder_id = request.args.get('folder_id', type=int)
+        page = request.args.get('page', 1, type=int)
+        limit = 20
+        
+        emails_data = api.get_emails(session['token'], folder_id=folder_id, page=page, limit=limit)
+        folders_data = api.get_folders(session['token'])
+        
+        # Handle both list and dict responses
+        if isinstance(emails_data, list):
+            emails_list = emails_data
+            total_emails = len(emails_data)
+        else:
+            emails_list = emails_data.get('emails', [])
+            total_emails = emails_data.get('total', len(emails_list))
+        
+        # Handle folders response
+        if isinstance(folders_data, list):
+            folders_list = folders_data
+        else:
+            folders_list = folders_data.get('folders', [])
+        
+        # Enrich emails with sender info from headers
+        for email in emails_list:
+            if not email.get('sender') and email.get('headers'):
+                sender = extract_sender_from_headers(email['headers'])
+                if sender:
+                    email['sender'] = sender
+        
+        # Get unread count
+        unread_count = sum(1 for e in emails_list if not e.get('is_read'))
+        
+        return render_template('inbox.html', 
+                             emails=emails_list,
+                             folders=folders_list,
+                             current_folder=folder_id,
+                             page=page,
+                             total=total_emails,
+                             limit=limit,
+                             unread_count=unread_count)
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired. Please log in again.', 'warning')
+        return redirect(url_for('auth.login'))
+    except APIError as e:
+        flash(str(e), 'error')
+        return render_template('inbox.html', emails=[], folders=[], current_folder=None, page=1, total=0, limit=20, unread_count=0)
+
+@emails_bp.route('/emails/<int:email_id>')
+@require_auth
+def email_detail(email_id):
+    try:
+        email = api.get_email(session['token'], email_id)
+        folders_data = api.get_folders(session['token'])
+        
+        # Handle folders response
+        if isinstance(folders_data, list):
+            folders_list = folders_data
+        else:
+            folders_list = folders_data.get('folders', [])
+        
+        # Enrich email with sender info from headers if missing
+        if email and not email.get('sender') and email.get('headers'):
+            sender = extract_sender_from_headers(email['headers'])
+            if sender:
+                email['sender'] = sender
+        
+        # Sanitize HTML body if present
+        if email and email.get('body_html'):
+            email['body_html'] = bleach.clean(email['body_html'], tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRIBUTES)
+        
+        return render_template('email_detail.html', 
+                             email=email or {},
+                             folders=folders_list)
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired. Please log in again.', 'warning')
+        return redirect(url_for('auth.login'))
+    except APIError as e:
+        flash(str(e), 'error')
+        return redirect(url_for('emails.inbox'))
+
+@emails_bp.route('/compose', methods=['GET', 'POST'])
+@require_auth
+def compose():
+    if request.method == 'POST':
+        to = request.form.get('to', '').strip()
+        subject = request.form.get('subject', '').strip()
+        body = request.form.get('body', '').strip()
+        
+        if not to or not subject:
+            flash('To and Subject are required', 'error')
+            return render_template('compose.html', to=to, subject=subject, body=body)
+        
+        try:
+            result = api.send_email(session['token'], to, subject, body)
+            flash('Email sent successfully!', 'success')
+            return redirect(url_for('emails.inbox'))
+        except AuthenticationError:
+            session.clear()
+            flash('Session expired. Please log in again.', 'warning')
+            return redirect(url_for('auth.login'))
+        except APIError as e:
+            flash(str(e), 'error')
+            return render_template('compose.html', to=to, subject=subject, body=body)
+    
+    # Pre-fill from query params (for reply/forward)
+    to = request.args.get('to', '')
+    subject = request.args.get('subject', '')
+    body = request.args.get('body', '')
+    
+    return render_template('compose.html', to=to, subject=subject, body=body)
+
+@emails_bp.route('/emails/<int:email_id>/reply')
+@require_auth
+def reply(email_id):
+    try:
+        email = api.get_email(session['token'], email_id)
+        
+        # Build reply
+        to = email.get('sender', {}).get('email', '')
+        subject = f"Re: {email.get('subject', '')}"
+        if not subject.startswith('Re: '):
+            subject = f"Re: {subject}"
+        
+        # Quote original
+        quoted_body = f"\n\nOn {email.get('created_at', '')}, {email.get('sender', {}).get('email', '')} wrote:\n> {email.get('body', '').replace(chr(10), chr(10) + '> ')}"
+        
+        return redirect(url_for('emails.compose', to=to, subject=subject, body=quoted_body))
+    except (AuthenticationError, APIError) as e:
+        flash(str(e), 'error')
+        return redirect(url_for('emails.email_detail', email_id=email_id))
+
+@emails_bp.route('/emails/<int:email_id>/forward')
+@require_auth
+def forward(email_id):
+    try:
+        email = api.get_email(session['token'], email_id)
+        
+        # Build forward
+        subject = f"Fw: {email.get('subject', '')}"
+        if not subject.startswith('Fw: '):
+            subject = f"Fw: {subject}"
+        
+        # Quote original
+        quoted_body = f"\n\n---------- Forwarded message ----------\nFrom: {email.get('sender', {}).get('email', '')}\nDate: {email.get('created_at', '')}\nSubject: {email.get('subject', '')}\n\n{email.get('body', '')}"
+        
+        return redirect(url_for('emails.compose', subject=subject, body=quoted_body))
+    except (AuthenticationError, APIError) as e:
+        flash(str(e), 'error')
+        return redirect(url_for('emails.email_detail', email_id=email_id))
+
+@emails_bp.route('/emails/<int:email_id>/read', methods=['POST'])
+@require_auth
+def mark_read(email_id):
+    try:
+        api.mark_read(session['token'], email_id)
+        flash('Email marked as read', 'success')
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired', 'warning')
+    except APIError as e:
+        flash(str(e), 'error')
+    
+    return redirect(request.referrer or url_for('emails.inbox'))
+
+@emails_bp.route('/emails/<int:email_id>/star', methods=['POST'])
+@require_auth
+def toggle_star(email_id):
+    try:
+        result = api.toggle_star(session['token'], email_id)
+        status = 'starred' if result.get('is_starred') else 'unstarred'
+        flash(f'Email {status}', 'success')
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired', 'warning')
+    except APIError as e:
+        flash(str(e), 'error')
+    
+    return redirect(request.referrer or url_for('emails.inbox'))
+
+@emails_bp.route('/emails/<int:email_id>/delete', methods=['POST'])
+@require_auth
+def delete_email(email_id):
+    try:
+        api.delete_email(session['token'], email_id)
+        flash('Email deleted', 'success')
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired', 'warning')
+    except APIError as e:
+        flash(str(e), 'error')
+    
+    return redirect(url_for('emails.inbox'))
+
+@emails_bp.route('/emails/<int:email_id>/move', methods=['POST'])
+@require_auth
+def move_email(email_id):
+    folder_id = request.form.get('folder_id', type=int)
+    if not folder_id:
+        flash('Please select a folder', 'error')
+        return redirect(request.referrer or url_for('emails.inbox'))
+    
+    try:
+        api.move_email(session['token'], email_id, folder_id)
+        flash('Email moved', 'success')
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired', 'warning')
+    except APIError as e:
+        flash(str(e), 'error')
+    
+    return redirect(request.referrer or url_for('emails.inbox'))
+
+@emails_bp.route('/search')
+@require_auth
+def search():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return redirect(url_for('emails.inbox'))
+    
+    try:
+        folder_id = request.args.get('folder_id', type=int)
+        flag = request.args.get('flag')
+        page = request.args.get('page', 1, type=int)
+        limit = 20
+        
+        results = api.search_emails(session['token'], query, folder_id=folder_id, flag=flag, page=page, limit=limit)
+        folders_data = api.get_folders(session['token'])
+        
+        # Handle both list and dict responses
+        if isinstance(results, list):
+            emails_list = results
+            total_results = len(results)
+        else:
+            emails_list = results.get('emails', [])
+            total_results = results.get('total', len(emails_list))
+        
+        # Handle folders response
+        if isinstance(folders_data, list):
+            folders_list = folders_data
+        else:
+            folders_list = folders_data.get('folders', [])
+        
+        return render_template('inbox.html',
+                             emails=emails_list,
+                             folders=folders_list,
+                             current_folder=None,
+                             page=page,
+                             total=total_results,
+                             limit=limit,
+                             search_query=query,
+                             is_search=True)
+    except AuthenticationError:
+        session.clear()
+        flash('Session expired. Please log in again.', 'warning')
+        return redirect(url_for('auth.login'))
+    except APIError as e:
+        flash(str(e), 'error')
+        return redirect(url_for('emails.inbox'))

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PyPG Mail{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .email-row:hover { background-color: #f3f4f6; }
+        .email-unread { font-weight: 600; }
+        .sidebar-link:hover { background-color: #e5e7eb; }
+        .sidebar-link.active { background-color: #d1d5db; }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="bg-gray-100 h-screen flex flex-col">
+    <!-- Top Navigation Bar -->
+    <header class="bg-white shadow-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+            <a href="{{ url_for('emails.inbox') }}" class="text-2xl font-bold text-blue-600">
+                <i class="fas fa-envelope mr-2"></i>PyPG Mail
+            </a>
+        </div>
+        
+        <!-- Search Bar -->
+        <div class="flex-1 max-w-2xl mx-4">
+            <form action="{{ url_for('emails.search') }}" method="get" class="relative">
+                <input type="text" name="q" placeholder="Search emails..." 
+                       class="w-full px-4 py-2 pl-10 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       value="{{ search_query if search_query else '' }}">
+                <button type="submit" class="absolute left-3 top-2.5 text-gray-400">
+                    <i class="fas fa-search"></i>
+                </button>
+            </form>
+        </div>
+        
+        <div class="flex items-center space-x-4">
+            {% if session.user %}
+                <span class="text-gray-600">{{ session.user.email }}</span>
+                <a href="{{ url_for('auth.logout') }}" class="text-red-600 hover:text-red-800">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            {% endif %}
+        </div>
+    </header>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="px-4 py-2">
+                {% for category, message in messages %}
+                    <div class="p-3 rounded-lg mb-2 
+                        {% if category == 'error' %}bg-red-100 text-red-800
+                        {% elif category == 'success' %}bg-green-100 text-green-800
+                        {% elif category == 'warning' %}bg-yellow-100 text-yellow-800
+                        {% else %}bg-blue-100 text-blue-800{% endif %}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <!-- Main Content Area -->
+    <div class="flex flex-1 overflow-hidden">
+        {% if session.user %}
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col overflow-y-auto">
+            <!-- Compose Button -->
+            <div class="p-4">
+                <a href="{{ url_for('emails.compose') }}" 
+                   class="block w-full bg-blue-600 text-white text-center py-3 rounded-lg hover:bg-blue-700 transition">
+                    <i class="fas fa-plus mr-2"></i>Compose
+                </a>
+            </div>
+            
+            <!-- Navigation -->
+            <nav class="flex-1 px-2">
+                <a href="{{ url_for('emails.inbox') }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if request.endpoint == 'emails.inbox' and not current_folder %}active{% endif %}">
+                    <i class="fas fa-inbox w-6"></i>
+                    <span>Inbox</span>
+                    {% if unread_count %}
+                        <span class="ml-auto bg-blue-600 text-white text-xs px-2 py-1 rounded-full">{{ unread_count }}</span>
+                    {% endif %}
+                </a>
+                
+                <a href="{{ url_for('emails.inbox', folder_id=2) }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if current_folder == 2 %}active{% endif %}">
+                    <i class="fas fa-paper-plane w-6"></i>
+                    <span>Sent</span>
+                </a>
+                
+                <a href="{{ url_for('emails.inbox', folder_id=3) }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if current_folder == 3 %}active{% endif %}">
+                    <i class="fas fa-file w-6"></i>
+                    <span>Drafts</span>
+                </a>
+                
+                <a href="{{ url_for('emails.inbox', flag='starred') }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1">
+                    <i class="fas fa-star w-6"></i>
+                    <span>Starred</span>
+                </a>
+                
+                <a href="{{ url_for('emails.inbox', folder_id=4) }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if current_folder == 4 %}active{% endif %}">
+                    <i class="fas fa-trash w-6"></i>
+                    <span>Trash</span>
+                </a>
+                
+                <hr class="my-2 border-gray-200">
+                
+                <!-- Folders Section -->
+                <div class="px-4 py-2 text-gray-500 text-sm font-semibold uppercase">
+                    Folders
+                </div>
+                
+                {% for folder in folders %}
+                    {% if folder.id > 4 %}  {# Custom folders only #}
+                    <a href="{{ url_for('emails.inbox', folder_id=folder.id) }}" 
+                       class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if current_folder == folder.id %}active{% endif %}">
+                        <i class="fas fa-folder w-6"></i>
+                        <span>{{ folder.name }}</span>
+                    </a>
+                    {% endif %}
+                {% endfor %}
+                
+                <a href="{{ url_for('folders.list_folders') }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 text-gray-600">
+                    <i class="fas fa-folder-plus w-6"></i>
+                    <span>Manage Folders</span>
+                </a>
+                
+                <hr class="my-2 border-gray-200">
+                
+                <!-- Admin Section -->
+                <div class="px-4 py-2 text-gray-500 text-sm font-semibold uppercase">
+                    Admin
+                </div>
+                
+                <a href="{{ url_for('whitelist.list_whitelist') }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if request.endpoint == 'whitelist.list_whitelist' %}active{% endif %}">
+                    <i class="fas fa-shield-alt w-6"></i>
+                    <span>Domain Whitelist</span>
+                </a>
+                
+                <a href="{{ url_for('blacklist.list_blacklist') }}" 
+                   class="sidebar-link flex items-center px-4 py-2 rounded-lg mb-1 {% if request.endpoint == 'blacklist.list_blacklist' %}active{% endif %}">
+                    <i class="fas fa-ban w-6"></i>
+                    <span>IP Blacklist</span>
+                </a>
+            </nav>
+        </aside>
+        {% endif %}
+        
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto bg-white">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
