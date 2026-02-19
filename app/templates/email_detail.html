@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}{{ email.subject or '(No subject)' }} - PyPG Mail{% endblock %}
+
+{% block content %}
+<div class="p-6">
+    <!-- Action Bar -->
+    <div class="flex items-center space-x-4 mb-6 pb-4 border-b border-gray-200">
+        <a href="{{ url_for('emails.inbox') }}" class="text-gray-600 hover:text-gray-800">
+            <i class="fas fa-arrow-left mr-2"></i>Back to Inbox
+        </a>
+        
+        <div class="flex-1"></div>
+        
+        <a href="{{ url_for('emails.reply', email_id=email.id) }}" 
+           class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-reply mr-2"></i>Reply
+        </a>
+        
+        <a href="{{ url_for('emails.forward', email_id=email.id) }}" 
+           class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+            <i class="fas fa-share mr-2"></i>Forward
+        </a>
+        
+        <form action="{{ url_for('emails.toggle_star', email_id=email.id) }}" method="post" class="inline">
+            <button type="submit" 
+                    class="px-4 py-2 {% if email.is_starred %}bg-yellow-500{% else %}bg-gray-200{% endif %} rounded-lg hover:opacity-80">
+                <i class="{% if email.is_starred %}fas{% else %}far{% endif %} fa-star mr-2"></i>
+                {% if email.is_starred %}Unstar{% else %}Star{% endif %}
+            </button>
+        </form>
+        
+        <form action="{{ url_for('emails.mark_read', email_id=email.id) }}" method="post" class="inline">
+            <button type="submit" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">
+                <i class="fas fa-envelope-open mr-2"></i>Mark Read
+            </button>
+        </form>
+        
+        <!-- Move to Folder -->
+        <form action="{{ url_for('emails.move_email', email_id=email.id) }}" method="post" class="inline">
+            <select name="folder_id" onchange="this.form.submit()" 
+                    class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">Move to...</option>
+                {% for folder in folders %}
+                    {% if folder.id != email.folder_id %}
+                        <option value="{{ folder.id }}">{{ folder.name }}</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+        </form>
+        
+        <form action="{{ url_for('emails.delete_email', email_id=email.id) }}" method="post" class="inline"
+              onsubmit="return confirm('Delete this email?')">
+            <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                <i class="fas fa-trash mr-2"></i>Delete
+            </button>
+        </form>
+    </div>
+    
+    <!-- Email Header -->
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 mb-4">{{ email.subject or '(No subject)' }}</h1>
+        
+        <div class="flex items-start space-x-4">
+            <div class="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                {{ email.sender.email[0].upper() if email.sender and email.sender.email else '?' }}
+            </div>
+            
+            <div class="flex-1">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="font-semibold text-gray-900">
+                            {{ email.sender.email if email.sender else 'Unknown' }}
+                        </div>
+                        <div class="text-sm text-gray-500">
+                            To: {{ email.recipient.email if email.recipient else 'Unknown' }}
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-500">
+                        {{ email.created_at }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Email Body -->
+    <div class="prose max-w-none">
+        {% if email.body_html %}
+            <div class="email-body">{{ email.body_html | safe }}</div>
+        {% else %}
+            <div class="email-body whitespace-pre-wrap">{{ email.body or '(No content)' }}</div>
+        {% endif %}
+    </div>
+    
+    <!-- Attachments -->
+    {% if email.attachments %}
+    <div class="mt-8 pt-4 border-t border-gray-200">
+        <h3 class="font-semibold mb-3">Attachments</h3>
+        <div class="flex flex-wrap gap-2">
+            {% for attachment in email.attachments %}
+            <div class="flex items-center px-3 py-2 bg-gray-100 rounded-lg">
+                <i class="fas fa-paperclip mr-2 text-gray-500"></i>
+                <span>{{ attachment.filename }}</span>
+                <span class="ml-2 text-sm text-gray-500">({{ attachment.size }} bytes)</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .email-body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        line-height: 1.6;
+    }
+    .email-body p { margin-bottom: 1em; }
+    .email-body blockquote { 
+        border-left: 4px solid #e5e7eb; 
+        padding-left: 1rem; 
+        margin-left: 0; 
+        color: #6b7280;
+    }
+</style>
+{% endblock %}

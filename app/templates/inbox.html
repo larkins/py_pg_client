@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}{% if is_search %}Search: {{ search_query }}{% else %}Inbox{% endif %} - PyPG Mail{% endblock %}
+
+{% block content %}
+<div class="p-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">
+            {% if is_search %}
+                Search results for "{{ search_query }}"
+            {% else %}
+                {% if current_folder == 2 %}Sent{% elif current_folder == 3 %}Drafts{% elif current_folder == 4 %}Trash{% else %}Inbox{% endif %}
+            {% endif %}
+        </h1>
+        <div class="text-gray-600">
+            {% if total > 0 %}
+                Showing {{ (page - 1) * limit + 1 }}-{{ [page * limit, total] | min }} of {{ total }}
+            {% else %}
+                No emails
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Email List -->
+    <div class="bg-white rounded-lg shadow">
+        {% if emails %}
+            <div class="divide-y divide-gray-200">
+                {% for email in emails %}
+                <div class="email-row flex items-center px-4 py-3 cursor-pointer {% if not email.is_read %}email-unread{% endif %}">
+                    <!-- Star Button -->
+                    <form action="{{ url_for('emails.toggle_star', email_id=email.id) }}" method="post" class="mr-3">
+                        <button type="submit" class="text-xl {% if email.is_starred %}text-yellow-400{% else %}text-gray-300 hover:text-gray-400{% endif %}">
+                            <i class="{% if email.is_starred %}fas{% else %}far{% endif %} fa-star"></i>
+                        </button>
+                    </form>
+                    
+                    <!-- Email Link -->
+                    <a href="{{ url_for('emails.email_detail', email_id=email.id) }}" class="flex-1 flex items-center min-w-0">
+                        <!-- Sender -->
+                        <div class="w-48 truncate text-gray-900">
+                            {% if email.sender %}
+                                {{ email.sender.email }}
+                            {% else %}
+                                Unknown
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Subject and Preview -->
+                        <div class="flex-1 min-w-0 mx-4">
+                            <span class="{% if not email.is_read %}font-bold{% endif %}">{{ email.subject or '(No subject)' }}</span>
+                            <span class="text-gray-500 ml-2">-</span>
+                            <span class="text-gray-500 truncate">{{ email.body[:100] if email.body else '' }}...</span>
+                        </div>
+                        
+                        <!-- Date -->
+                        <div class="text-gray-500 text-sm whitespace-nowrap">
+                            {{ email.created_at[:10] if email.created_at else '' }}
+                        </div>
+                    </a>
+                    
+                    <!-- Actions -->
+                    <div class="ml-4 flex items-center space-x-2 opacity-0 hover:opacity-100 transition-opacity">
+                        <form action="{{ url_for('emails.delete_email', email_id=email.id) }}" method="post" 
+                              onsubmit="return confirm('Delete this email?')">
+                            <button type="submit" class="text-gray-400 hover:text-red-600">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <!-- Pagination -->
+            {% if total > limit %}
+            <div class="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+                {% if page > 1 %}
+                    <a href="?{% if current_folder %}folder_id={{ current_folder }}&{% endif %}{% if is_search %}q={{ search_query }}&{% endif %}page={{ page - 1 }}" 
+                       class="text-blue-600 hover:text-blue-800">
+                        <i class="fas fa-chevron-left mr-1"></i> Previous
+                    </a>
+                {% else %}
+                    <span></span>
+                {% endif %}
+                
+                <span class="text-gray-600">Page {{ page }} of {{ ((total - 1) / limit) | int + 1 }}</span>
+                
+                {% if page * limit < total %}
+                    <a href="?{% if current_folder %}folder_id={{ current_folder }}&{% endif %}{% if is_search %}q={{ search_query }}&{% endif %}page={{ page + 1 }}" 
+                       class="text-blue-600 hover:text-blue-800">
+                        Next <i class="fas fa-chevron-right ml-1"></i>
+                    </a>
+                {% else %}
+                    <span></span>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% else %}
+            <div class="p-8 text-center text-gray-500">
+                <i class="fas fa-inbox text-6xl mb-4 text-gray-300"></i>
+                <p class="text-lg">{% if is_search %}No emails match your search.{% else %}Your inbox is empty.{% endif %}</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
