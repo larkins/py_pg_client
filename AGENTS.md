@@ -2,299 +2,231 @@
 
 ## Overview
 
-You are building a Gmail-like web email client that connects to the mail server at `py_pg_email`. This client provides a user-friendly interface for manual email inspection, making it easier than using Swagger or database queries.
+A Gmail-like web email client connecting to the mail server at `py_pg_email` (port 5003). This client runs on port 5005.
 
 ## Project Structure
-
-**Location**: `~/git/py_pg_client`
-**Port**: 5005 (must use this exact port)
-**Access**: localhost only (for now)
-
-## Mail Server API Reference
-
-The client connects to the mail server API documented in:
-- `~/git/py_pg_email/coding_agent/API_INTEGRATION_GUIDE.md`
-- `~/git/py_pg_email/API_DOCUMENTATION.md`
-
-**Key Server Details**:
-- API Base URL: `http://localhost:5003`
-- Authorized User: michael@protophysics.com.au
-- All endpoints require JWT Bearer token (except /health)
-
-## Required Features
-
-### 1. Authentication
-- **Login page**: Email/password form
-- **JWT token management**: Store in localStorage/sessionStorage
-- **Logout**: Clear tokens and redirect to login
-- Use the existing user from the mail server
-
-### 2. Email Management
-- **Inbox view**: List emails with sender, subject, preview, date
-- **Read email**: Full email display with HTML/text support
-- **Compose**: Create and send new emails
-- **Reply/Forward**: Email threading actions
-- **Mark read/unread**: Toggle read status
-- **Star/Unstar**: Toggle starred status
-- **Delete**: Move to trash
-- **Move to folder**: Change email folder
-
-### 3. Folders (Gmail-style)
-- Inbox
-- Sent
-- Drafts
-- Trash/Spam
-- Starred
-- Custom folders (create/list/delete)
-
-### 4. Search
-- Search emails by subject, body, sender
-- Filter by folder, read/unread, starred
-
-### 5. Domain Whitelist (NEW)
-**Purpose**: Mark domains as "safe" to prevent false positives in spam filtering
-
-**Requirements**:
-- Database table: `domain_whitelist`
-  - `id`, `domain` (VARCHAR, UNIQUE), `created_at`, `notes`
-- API endpoints:
-  - `GET /api/whitelist/domains` - List all whitelisted domains
-  - `POST /api/whitelist/domains` - Add domain to whitelist
-  - `DELETE /api/whitelist/domains/<id>` - Remove domain
-  - `GET /api/whitelist/check/<domain>` - Check if domain is whitelisted
-- UI: Settings page to manage whitelisted domains
-- Usage: When displaying emails, show whitelist status; when processing incoming emails, check against whitelist
-
-### 6. IP Blacklist Management (Server Feature)
-**Purpose**: View/manage IPs blocked at the SMTP level
-
-**Client Requirements**:
-- Read-only view of blacklist (client can display, but server manages)
-- Display list of blacklisted IPs with reason, source, hit count
-- Ability to remove IPs from blacklist (via server API)
-- Statistics dashboard showing blacklist stats
-
-**Server Endpoints** (from `~/git/py_pg_email`):
-- `GET /api/blacklist/ip` - List blacklisted IPs
-- `DELETE /api/blacklist/ip/<id>` - Remove IP
-- `GET /api/blacklist/stats` - Get statistics
-
-## Technical Stack
-
-**Choose one of these** (pick what's most appropriate for a lean Gmail clone):
-- **Option 1**: Flask + Jinja2 templates (server-side rendering, simple)
-- **Option 2**: Flask + React/Vue (SPA, more interactive)
-- **Option 3**: FastAPI + HTMX (modern, lightweight)
-
-**Recommendation**: Flask + Jinja2 for simplicity, or Flask + minimal JavaScript for interactivity.
-
-**Database**: PostgreSQL (separate from mail server DB, or share if appropriate)
-
-## Project Architecture
 
 ```
 ~/git/py_pg_client/
 ├── app/
-│   ├── __init__.py          # Flask app setup
-│   ├── routes.py            # Main routes
-│   ├── api_client.py        # Mail server API wrapper
-│   ├── db.py                # Database connection
-│   ├── models.py            # Database models
-│   ├── templates/           # HTML templates
-│   │   ├── base.html
-│   │   ├── login.html
-│   │   ├── inbox.html
-│   │   ├── email_detail.html
-│   │   ├── compose.html
-│   │   ├── folders.html
-│   │   ├── whitelist.html   # Domain whitelist management
-│   │   └── blacklist.html   # IP blacklist view
-│   └── static/
-│       ├── css/
-│       └── js/
-├── coding_agent/
-│   └── plan.md              # Detailed implementation plan
-├── config.py                # Configuration
-├── requirements.txt         # Python dependencies
-├── run.py                   # Entry point
-└── AGENTS.md               # This file
+│   ├── __init__.py              # Flask app initialization + blueprints
+│   ├── api_client.py            # Mail server API wrapper
+│   ├── db.py                    # Database connection
+│   ├── routes/
+│   │   ├── auth.py              # Login/logout
+│   │   ├── emails.py            # Inbox, compose, email actions
+│   │   ├── folders.py           # Folder management
+│   │   ├── whitelist.py         # Domain whitelist
+│   │   └── blacklist.py         # IP blacklist view
+│   └── templates/               # Jinja2 HTML templates
+├── tests/                       # Test files
+├── config.py                    # Configuration
+├── requirements.txt             # Python dependencies
+├── run.py                       # Entry point
+└── AGENTS.md                    # This file
 ```
 
-## API Integration Pattern
+## Running the Application
 
-### Authentication Flow
+### Development
+```bash
+cd ~/git/py_pg_client
+source venv/bin/activate
+python3 run.py
+```
+
+### Production (systemd)
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now email-client.service
+```
+
+Service file: `~/.config/systemd/user/email-client.service`
+
+Commands:
+- `systemctl --user status email-client.service` - check status
+- `systemctl --user restart email-client.service` - restart
+- `systemctl --user stop email-client.service` - stop
+- `journalctl --user -u email-client.service` - view logs
+
+The application runs on `http://localhost:5005`. Authorized user: `michael@protophysics.com.au`
+
+## Build/Lint/Test Commands
+
+### Install Dependencies
+```bash
+pip install -r requirements.txt
+pip install pytest>=7.0.0 pytest-flask>=1.2.0 pytest-cov>=4.0.0 flake8>=6.0.0 black>=23.0.0 mypy>=1.0.0
+```
+
+### Running Tests
+```bash
+# Run all tests
+pytest
+
+# Run single test file
+pytest tests/test_connectivity.py
+
+# Run single test
+pytest tests/test_connectivity.py::TestConnectivity::test_mail_server_reachable
+
+# Run specific test function by name pattern
+pytest -k "test_mail_server" -v
+
+# Run with coverage
+pytest --cov=app --cov-report=term-missing
+```
+
+### Linting & Type Checking
+```bash
+flake8 app/ --max-line-length=100 --ignore=E501,W503
+black --check app/
+black app/  # auto-fix
+mypy app/ --ignore-missing-imports
+```
+
+## Code Style Guidelines
+
+### General Principles
+- **Clean and minimal** - Flask + Jinja2 server-side rendering
+- **Follow existing patterns** - Match the coding style in the codebase
+- **Security-first** - Never expose JWT tokens to client-side JS
+
+### Imports (order: stdlib, third-party, local)
 ```python
-# Store token in session
-session['jwt_token'] = token
+import os
+import json
+from functools import wraps
 
-# Use in API calls
-headers = {'Authorization': f'Bearer {session["jwt_token"]}'}
-response = requests.get('http://localhost:5003/api/emails', headers=headers)
+from flask import Blueprint, render_template, request, redirect, url_for, session, flash
+import requests
+
+from app.api_client import MailServerAPI, AuthenticationError, APIError
+from config import Config
+```
+
+### Formatting
+- Line length: 100 characters max
+- Indentation: 4 spaces (no tabs)
+- Blank lines: 2 between top-level definitions, 1 between functions
+
+### Naming Conventions
+| Type | Convention | Example |
+|------|------------|---------|
+| Files | snake_case | `api_client.py` |
+| Classes | PascalCase | `MailServerAPI` |
+| Functions/variables | snake_case | `get_emails()` |
+| Constants | UPPER_SNAKE_CASE | `MAX_PAGE_SIZE = 100` |
+| Blueprint names | snake_case + `_bp` suffix | `auth_bp` |
+
+### Type Hints
+```python
+def get_emails(self, token: str, folder_id: int | None = None, page: int = 1) -> dict:
+    """Get list of emails."""
+    pass
 ```
 
 ### Error Handling
-- 401 Unauthorized → Redirect to login
-- 5xx Server Error → Show error message
-- Network errors → Retry with exponential backoff
+- Use custom exception classes (`AuthenticationError`, `APIError`)
+- Catch specific exceptions, not bare `Exception`
+- Return meaningful error messages via `flash`
 
-### Session Management
-- Use Flask sessions for web state
-- Store JWT token server-side (more secure than localStorage)
-- Token refresh not needed (24h validity)
+```python
+class AuthenticationError(Exception):
+    pass
 
-## Database Schema (Client-only tables)
+class APIError(Exception):
+    pass
 
-```sql
--- Domain Whitelist (NEW)
-CREATE TABLE domain_whitelist (
-    id SERIAL PRIMARY KEY,
-    domain VARCHAR(255) UNIQUE NOT NULL,
-    notes TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- User preferences (optional)
-CREATE TABLE user_preferences (
-    id SERIAL PRIMARY KEY,
-    user_email VARCHAR(255) NOT NULL,
-    setting_name VARCHAR(100) NOT NULL,
-    setting_value TEXT,
-    UNIQUE(user_email, setting_name)
-);
+try:
+    token, user = api.login(email, password)
+except AuthenticationError:
+    flash('Invalid credentials', 'error')
+except APIError as e:
+    flash(str(e), 'error')
 ```
 
-## UI Design Guidelines
+### Routes/Blueprint Patterns
+```python
+from flask import Blueprint, render_template, request, redirect, url_for
 
-### Gmail-like Layout
-```
-┌─────────────────────────────────────────────────┐
-│  Logo    Search...              User ▼  Logout  │
-├────────┬────────────────────────────────────────┤
-│ Compose│                                        │
-│        │  Subject              Sender      Date │
-│ Inbox  │  ────────────────────────────────────│
-│ Sent   │  ★ Email subject      John       2m   │
-│ Drafts │  Email subject 2      Jane       1h   │
-│ Trash  │                                        │
-│        │                                        │
-│ Folders│                                        │
-│   -Work│                                        │
-│   -Home│                                        │
-├────────┴────────────────────────────────────────┤
-│  ← 1-25 of 100 →                                │
-└─────────────────────────────────────────────────┘
+auth_bp = Blueprint('auth', __name__)
+api = MailServerAPI()
+
+@auth_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        # ... logic
+    return render_template('login.html')
 ```
 
-### Key UI Principles
-- Clean, minimal design (TailwindCSS or similar)
-- Responsive layout
-- Keyboard shortcuts (j/k for navigation, r for reply, etc.)
-- Loading states for async operations
-- Toast notifications for actions
+### Authentication Decorator
+```python
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'token' not in session:
+            flash('Please log in to access this page', 'warning')
+            return redirect(url_for('auth.login'))
+        return f(*args, **kwargs)
+    return decorated_function
+```
 
-## Implementation Priority
+### Template Guidelines
+- Use Jinja2 auto-escaping (default) for XSS prevention
+- Sanitize HTML email bodies with `bleach` before display
 
-### Phase 1: Core (MVP)
-1. Project setup (Flask, config, DB connection)
-2. Login/logout
-3. Inbox list view
-4. Read email view
-5. Compose email
+### Security
+- Store JWT in Flask session (server-side), never localStorage
+- Validate all user inputs
+- Use parameterized queries via psycopg2
 
-### Phase 2: Email Management
-6. Reply/Forward
-7. Mark read/unread
-8. Star/unstar
-9. Delete/move to trash
+## API Integration
 
-### Phase 3: Organization
-10. Folder management (create, list, delete)
-11. Move emails between folders
-12. Search functionality
+### Base Configuration
+- Mail Server URL: `http://localhost:5003`
+- All endpoints require JWT Bearer token (except `/health`)
 
-### Phase 4: Admin Features
-13. Domain whitelist (database + UI)
-14. IP blacklist view/management (integrate with server API)
-15. Settings page
+### Common Patterns
+```python
+# Store token in session
+session['token'] = token
+session['user'] = user
+session.permanent = True
 
-## Security Considerations
+# Use in API calls
+headers = {'Authorization': f'Bearer {session["token"]}'}
+response = requests.get(f'{API_URL}/api/emails', headers=headers)
 
-1. **CSRF Protection**: Use Flask-WTF or similar
-2. **XSS Prevention**: Escape all user input in templates
-3. **Session Security**: Use secure session cookies
-4. **API Security**: Never expose mail server JWT to client-side JS
-5. **Input Validation**: Validate all form inputs
-6. **SQL Injection**: Use parameterized queries
+# Handle 401
+if response.status_code == 401:
+    return redirect(url_for('auth.login'))
+```
 
-## Testing Strategy
+### Key Endpoints Used
+- `POST /auth/login` - Authentication
+- `GET/POST/DELETE /api/emails` - Email CRUD
+- `GET/POST/DELETE /api/folders` - Folder management
+- `GET /api/search` - Search
+- `GET/DELETE /api/blacklist/ip` - Blacklist management
 
-- Unit tests for API client functions
-- Integration tests for full flows
-- Manual testing checklist:
-  - [ ] Login/logout
-  - [ ] View inbox
-  - [ ] Read email
-  - [ ] Compose and send
-  - [ ] Reply to email
-  - [ ] Star/unstar
-  - [ ] Delete
-  - [ ] Manage folders
-  - [ ] Search
-  - [ ] Domain whitelist
-  - [ ] IP blacklist view
+## Dependencies
+```
+flask>=2.0.0 requests>=2.28.0 psycopg2-binary>=2.9.0 python-dotenv>=0.19.0
+flask-wtf>=1.0.0 wtforms>=3.0.0 flask-login>=0.6.0 email-validator>=1.3.0 bleach>=6.0.0
+pytest>=7.0.0 pytest-flask>=1.2.0 pytest-cov>=4.0.0 flake8>=6.0.0 black>=23.0.0 mypy>=1.0.0
+```
 
 ## Common Pitfalls
 
 1. **Don't** store JWT in localStorage (use server-side session)
 2. **Don't** expose mail server API credentials to browser
-3. **Do** handle token expiration gracefully
+3. **Do** handle token expiration gracefully (redirect to login)
 4. **Do** validate all user inputs
-5. **Do** use transactions for DB operations
-6. **Don't** hardcode credentials in code
-
-## Dependencies
-
-Core requirements (add to requirements.txt):
-```
-flask>=2.0.0
-requests>=2.28.0
-psycopg2-binary>=2.9.0
-python-dotenv>=0.19.0
-flask-wtf>=1.0.0  # For forms and CSRF
-wtforms>=3.0.0
-```
-
-Optional for better UI:
-```
-flask-assets>=2.0  # Asset pipeline
-tailwindcss  # Via CDN or npm
-htmx>=1.8.0  # For interactivity without React
-```
-
-## Getting Started
-
-1. Read the full plan in `coding_agent/plan.md`
-2. Set up the project structure
-3. Implement Phase 1 (MVP)
-4. Test with the mail server running on port 5003
-5. Iterate through remaining phases
+5. **Do** use parameterized queries for DB operations
 
 ## Questions?
-
-If unclear on requirements:
-1. Check the API integration guide: `~/git/py_pg_email/coding_agent/API_INTEGRATION_GUIDE.md`
-2. Review the mail server API docs: `~/git/py_pg_email/API_DOCUMENTATION.md`
-3. Ask for clarification on specific features
-
-## Success Criteria
-
-- [ ] Runs on port 5005
-- [ ] Can login with michael@protophysics.com.au credentials
-- [ ] Can view inbox and read emails
-- [ ] Can compose and send emails
-- [ ] Can manage folders
-- [ ] Can search emails
-- [ ] Domain whitelist feature works
-- [ ] IP blacklist view works
-- [ ] Clean, Gmail-like UI
-- [ ] All 133 server tests still pass
+1. Check API guide: `~/git/py_pg_email/coding_agent/API_INTEGRATION_GUIDE.md`
+2. Review API docs: `~/git/py_pg_email/API_DOCUMENTATION.md`
