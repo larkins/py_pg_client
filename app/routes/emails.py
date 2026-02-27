@@ -163,16 +163,17 @@ def email_detail(email_id):
             if sender:
                 email['sender'] = sender
         
-        # Parse MIME body if present
-        if email and email.get('body'):
-            parsed_body, html_body = parse_mime_body(email.get('body', ''))
-            email['body'] = parsed_body
-            if html_body and not email.get('body_html'):
-                email['body_html'] = html_body
+        # Use HTML from API response (body_html field maps to 'html' in response)
+        html_content = email.get('html') if email else None
         
-        # Sanitize HTML body if present
-        if email and email.get('body_html'):
-            email['body_html'] = bleach.clean(email['body_html'], tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRIBUTES)
+        # Fallback to MIME parsing if no HTML from API
+        if not html_content and email and email.get('body'):
+            _, html_body = parse_mime_body(email.get('body', ''))
+            html_content = html_body
+        
+        # Sanitize HTML content
+        if html_content:
+            email['body_html'] = bleach.clean(html_content, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRIBUTES)
         
         return render_template('email_detail.html', 
                              email=email or {},
