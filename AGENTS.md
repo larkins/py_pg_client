@@ -54,7 +54,9 @@ The application runs on `http://localhost:5005`. Authorized user: `michael@proto
 ## Build/Lint/Test Commands
 
 ### Install Dependencies
+**IMPORTANT**: Always activate the virtual environment before running pip:
 ```bash
+source venv/bin/activate
 pip install -r requirements.txt
 pip install pytest>=7.0.0 pytest-flask>=1.2.0 pytest-cov>=4.0.0 flake8>=6.0.0 black>=23.0.0 mypy>=1.0.0
 ```
