@@ -22,12 +22,35 @@
         </div>
     </div>
     
+    <!-- Bulk Actions Bar -->
+    <form id="bulk-action-form" method="post" action="{{ url_for('emails.bulk_delete') }}">
+        <input type="hidden" name="email_ids" id="selected-ids">
+        
+        <div id="bulk-actions" class="hidden mb-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center">
+                <span id="selected-count" class="text-sm text-gray-700 mr-4">0 selected</span>
+                <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded text-sm">
+                    <i class="fas fa-trash mr-1"></i> Delete Selected
+                </button>
+            </div>
+        </div>
+    </form>
+    
     <!-- Email List -->
     <div class="bg-white rounded-lg shadow">
         {% if emails %}
+            <!-- Header with select all -->
+            <div class="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center">
+                <input type="checkbox" id="select-all" class="w-4 h-4 text-blue-600 rounded mr-4">
+                <span class="text-sm text-gray-500">Select all</span>
+            </div>
+            
             <div class="divide-y divide-gray-200">
                 {% for email in emails %}
                 <div class="email-row flex items-center px-4 py-3 cursor-pointer {% if not email.is_read %}email-unread{% endif %}">
+                    <!-- Checkbox -->
+                    <input type="checkbox" name="email_select" value="{{ email.id }}" class="email-checkbox w-4 h-4 text-blue-600 rounded mr-4">
+                    
                     <!-- Star Button -->
                     <form action="{{ url_for('emails.toggle_star', email_id=email.id) }}" method="post" class="mr-3">
                         <button type="submit" class="text-xl {% if email.is_starred %}text-yellow-400{% else %}text-gray-300 hover:text-gray-400{% endif %}">
@@ -104,4 +127,47 @@
         {% endif %}
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectAll = document.getElementById('select-all');
+    const checkboxes = document.querySelectorAll('.email-checkbox');
+    const bulkActions = document.getElementById('bulk-actions');
+    const selectedCount = document.getElementById('selected-count');
+    const selectedIds = document.getElementById('selected-ids');
+    const bulkForm = document.getElementById('bulk-action-form');
+    
+    function updateBulkActions() {
+        const selected = Array.from(checkboxes).filter(c => c.checked);
+        if (selected.length > 0) {
+            bulkActions.classList.remove('hidden');
+            selectedCount.textContent = selected.length + ' selected';
+            selectedIds.value = selected.map(c => c.value).join(',');
+        } else {
+            bulkActions.classList.add('hidden');
+            selectedIds.value = '';
+        }
+    }
+    
+    selectAll.addEventListener('change', function() {
+        checkboxes.forEach(cb => cb.checked = this.checked);
+        updateBulkActions();
+    });
+    
+    checkboxes.forEach(cb => {
+        cb.addEventListener('change', updateBulkActions);
+    });
+    
+    bulkForm.addEventListener('submit', function(e) {
+        const selected = Array.from(checkboxes).filter(c => c.checked);
+        if (selected.length === 0) {
+            e.preventDefault();
+            return;
+        }
+        if (!confirm('Delete ' + selected.length + ' email(s)?')) {
+            e.preventDefault();
+        }
+    });
+});
+</script>
 {% endblock %}

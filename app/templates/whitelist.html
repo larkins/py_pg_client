@@ -51,7 +51,7 @@
                                 <div class="text-sm text-gray-500">{{ domain.notes }}</div>
                             {% endif %}
                             <div class="text-xs text-gray-400">
-                                Added {{ domain.created_at[:10] if domain.created_at else 'Unknown' }}
+                                Added {{ domain.created_at.strftime('%Y-%m-%d') if domain.created_at else 'Unknown' }}
                             </div>
                         </div>
                     </div>

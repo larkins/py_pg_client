@@ -2,12 +2,64 @@ from flask import Blueprint, render_template, request, redirect, url_for, sessio
 from app.api_client import MailServerAPI, AuthenticationError, APIError, require_auth
 import bleach
 import re
+import base64
+from email import policy
+from email.parser import BytesParser
 
 emails_bp = Blueprint('emails', __name__)
 api = MailServerAPI()
 
-ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'blockquote']
-ALLOWED_ATTRIBUTES = {'a': ['href', 'title']}
+ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'blockquote', 'table', 'tr', 'td', 'th', 'span', 'div', 'img']
+ALLOWED_ATTRIBUTES = {'a': ['href', 'title'], 'img': ['src', 'alt', 'width', 'height']}
+
+def parse_mime_body(body_content, content_type=None):
+    """Parse MIME content and extract HTML/text body."""
+    if not body_content:
+        return '', ''
+    
+    if isinstance(body_content, str):
+        body_bytes = body_content.encode('utf-8')
+    else:
+        body_bytes = body_content
+    
+    try:
+        parser = BytesParser(policy=policy.default)
+        msg = parser.parsebytes(body_bytes)
+        
+        if msg.is_multipart():
+            html_body = ''
+            text_body = ''
+            
+            for part in msg.walk():
+                content_type_part = part.get_content_type()
+                payload = part.get_payload(decode=True)
+                
+                if payload:
+                    try:
+                        decoded = payload.decode('utf-8', errors='replace')
+                    except:
+                        try:
+                            decoded = payload.decode('latin-1', errors='replace')
+                        except:
+                            decoded = str(payload)
+                    
+                    if content_type_part == 'text/html' and not html_body:
+                        html_body = decoded
+                    elif content_type_part == 'text/plain' and not text_body:
+                        text_body = decoded
+            
+            return html_body or text_body, html_body
+        else:
+            payload = msg.get_payload(decode=True)
+            if payload:
+                try:
+                    return payload.decode('utf-8', errors='replace'), ''
+                except:
+                    return str(payload), ''
+            return '', ''
+    except Exception as e:
+        print(f"Error parsing MIME: {e}")
+        return body_content, ''
 
 def extract_sender_from_headers(headers):
     """Extract sender email from email headers"""
@@ -110,6 +162,13 @@ def email_detail(email_id):
             sender = extract_sender_from_headers(email['headers'])
             if sender:
                 email['sender'] = sender
+        
+        # Parse MIME body if present
+        if email and email.get('body'):
+            parsed_body, html_body = parse_mime_body(email.get('body', ''))
+            email['body'] = parsed_body
+            if html_body and not email.get('body_html'):
+                email['body_html'] = html_body
         
         # Sanitize HTML body if present
         if email and email.get('body_html'):
@@ -236,6 +295,39 @@ def delete_email(email_id):
         flash('Session expired', 'warning')
     except APIError as e:
         flash(str(e), 'error')
+    
+    return redirect(url_for('emails.inbox'))
+
+@emails_bp.route('/emails/bulk-delete', methods=['POST'])
+@require_auth
+def bulk_delete():
+    email_ids_str = request.form.get('email_ids', '')
+    if not email_ids_str:
+        flash('No emails selected', 'error')
+        return redirect(url_for('emails.inbox'))
+    
+    email_ids = [int(id) for id in email_ids_str.split(',') if id.isdigit()]
+    if not email_ids:
+        flash('Invalid selection', 'error')
+        return redirect(url_for('emails.inbox'))
+    
+    deleted_count = 0
+    errors = []
+    for email_id in email_ids:
+        try:
+            api.delete_email(session['token'], email_id)
+            deleted_count += 1
+        except AuthenticationError:
+            session.clear()
+            flash('Session expired. Please log in again.', 'warning')
+            return redirect(url_for('auth.login'))
+        except APIError as e:
+            errors.append(str(e))
+    
+    if deleted_count > 0:
+        flash(f'{deleted_count} email(s) deleted', 'success')
+    if errors:
+        flash('Some emails could not be deleted: ' + '; '.join(errors), 'error')
     
     return redirect(url_for('emails.inbox'))
 
