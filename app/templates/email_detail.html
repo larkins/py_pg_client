@@ -88,8 +88,15 @@
     <div class="prose max-w-none">
         {% if email.body_html %}
             <div class="email-body">{{ email.body_html | safe }}</div>
+        {% elif email.body %}
+            {% set first_char = (email.body.strip()[:1] if email.body.strip() else '') %}
+            {% if first_char == '<' %}
+                <div class="email-body">{{ email.body | safe }}</div>
+            {% else %}
+                <div class="email-body whitespace-pre-wrap">{{ email.body }}</div>
+            {% endif %}
         {% else %}
-            <div class="email-body whitespace-pre-wrap">{{ email.body or '(No content)' }}</div>
+            <div class="email-body whitespace-pre-wrap">(No content)</div>
         {% endif %}
     </div>
     
