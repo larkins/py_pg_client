@@ -24,6 +24,10 @@ class AuthenticationError(Exception):
 class APIError(Exception):
     pass
 
+class AttachmentUploadError(Exception):
+    """Raised when the mail server rejects an attachment upload."""
+    pass
+
 class MailServerAPI:
     def __init__(self):
         self.base_url = Config.MAIL_SERVER_API_URL
@@ -141,15 +145,39 @@ class MailServerAPI:
         return self._make_request('POST', '/api/emails', token, json=data)
     
     def upload_attachment(self, token, email_id, file_storage):
-        """Upload a file attachment to an email"""
+        """Upload a file attachment to an email.
+
+        Raises AttachmentUploadError with the server's own reason when the
+        file is rejected, so the caller can tell the user which file failed
+        instead of silently dropping it.
+        """
         headers = {'Authorization': f'Bearer {token}'}
-        files = {'file': (file_storage.filename, file_storage.stream, file_storage.content_type)}
+        stream = file_storage.stream
+        try:
+            stream.seek(0)
+        except Exception:
+            pass
+        files = {'file': (file_storage.filename, stream, file_storage.content_type)}
         url = f'{self.base_url}/api/emails/{email_id}/attachments'
         response = requests.post(url, headers=headers, files=files, verify=_TLS_VERIFY)
         if response.status_code == 401:
             raise AuthenticationError("Invalid or expired token")
-        response.raise_for_status()
+        if not response.ok:
+            detail = response.text
+            try:
+                detail = response.json().get('error') or detail
+            except Exception:
+                pass
+            raise AttachmentUploadError(f"{file_storage.filename}: {detail}")
         return response.json()
+
+    def get_allowed_attachment_types(self, token):
+        """Return the file types the mail server accepts as attachments.
+
+        The compose form builds its file picker from this, so the picker
+        and the server's policy can never disagree.
+        """
+        return self._make_request('GET', '/api/attachments/allowed-types', token)
 
     def copy_attachment(self, token, source_attachment_id, target_email_id):
         """Copy an existing attachment onto another email."""
