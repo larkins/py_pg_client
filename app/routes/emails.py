@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, session, flash, jsonify
 from app.api_client import MailServerAPI, AuthenticationError, APIError, require_auth
 import bleach
+import logging
 import re
 import base64
 from email import policy
@@ -8,6 +9,62 @@ from email.parser import BytesParser
 
 emails_bp = Blueprint('emails', __name__)
 api = MailServerAPI()
+logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# Fallback list, used only when the mail server cannot be reached. Keep this
+# in sync with ALLOWED_EXTENSIONS in the mail server's
+# app/utils/attachment_policy.py.
+FALLBACK_ALLOWED_EXTENSIONS = [
+    '7z', 'aba', 'bmp', 'bz2', 'cer', 'crt', 'csv', 'doc', 'docx', 'eml',
+    'epub', 'gif', 'gz', 'heic', 'heif', 'htm', 'html', 'ics', 'jpeg', 'jpg',
+    'json', 'key', 'm4a', 'm4v', 'md', 'mov', 'mp3', 'mp4', 'msg', 'numbers',
+    'odp', 'ods', 'odt', 'p12', 'pdf', 'pem', 'pfx', 'png', 'ppt', 'pptx',
+    'qbo', 'qif', 'rar', 'rtf', 'tar', 'tgz', 'tif', 'tiff', 'tsv', 'txt',
+    'wav', 'webp', 'xls', 'xlsb', 'xlsm', 'xlsx', 'xml', 'xz', 'yaml', 'yml',
+    'zip',
+]
+
+
+def _attachment_policy():
+    """Template kwargs describing which attachments the mail server accepts.
+
+    Asking the server keeps the compose form's file picker in step with the
+    server's policy, instead of carrying a second, drifting copy of it.
+    """
+    try:
+        data = api.get_allowed_attachment_types(session['token']) or {}
+        extensions = data.get('allowed_extensions')
+        if extensions:
+            return {
+                'allowed_extensions': sorted(extensions),
+                'max_file_size': int(data.get('max_file_size') or DEFAULT_MAX_FILE_SIZE),
+            }
+    except Exception as e:
+        logger.warning('Could not fetch allowed attachment types: %s', e)
+    return {
+        'allowed_extensions': sorted(FALLBACK_ALLOWED_EXTENSIONS),
+        'max_file_size': DEFAULT_MAX_FILE_SIZE,
+    }
+
+
+def _upload_attachments(token, email_id, files):
+    """Upload each attachment, collecting failures instead of hiding them.
+
+    Returns a list of human-readable errors. An empty list means every file
+    was accepted.
+    """
+    errors = []
+    for f in files or []:
+        if not f or not f.filename:
+            continue
+        try:
+            api.upload_attachment(token, email_id, f)
+        except Exception as exc:
+            errors.append(str(exc))
+            logger.warning('Attachment upload failed for %s: %s', f.filename, exc)
+    return errors
 
 ALLOWED_TAGS = [
     'html', 'body', 'head', 'meta', 'title', 'link', 'style',
@@ -525,6 +582,7 @@ def compose():
                     forwarded_attachments = []
             return render_template(
                 'compose.html',
+                **_attachment_policy(),
                 to=to,
                 cc=cc,
                 subject=subject,
@@ -538,6 +596,7 @@ def compose():
             flash('To and Subject are required', 'error')
             return render_template(
                 'compose.html',
+                **_attachment_policy(),
                 to=to,
                 cc=cc,
                 subject=subject,
@@ -565,15 +624,18 @@ def compose():
                 email_id = result.get('id') if result else None
                 
                 # Upload attachments to draft
+                upload_errors = []
                 if email_id and files:
-                    for f in files:
-                        if f and f.filename:
-                            try:
-                                api.upload_attachment(session['token'], email_id, f)
-                            except Exception:
-                                pass
-                
-                flash('Draft saved', 'success')
+                    upload_errors = _upload_attachments(session['token'], email_id, files)
+
+                if upload_errors:
+                    flash(
+                        'Draft saved, but these attachments were rejected: '
+                        + '; '.join(upload_errors),
+                        'warning'
+                    )
+                else:
+                    flash('Draft saved', 'success')
                 return redirect(url_for('emails.compose'))
             else:
                 # Split body into plain text and HTML if forwarding HTML
@@ -608,13 +670,9 @@ def compose():
                 email_id = result.get('id') if result else None
             forward_copy_failed = False
 
+            upload_errors = []
             if email_id and files:
-                for f in files:
-                    if f and f.filename:
-                        try:
-                            api.upload_attachment(session['token'], email_id, f)
-                        except Exception:
-                            pass
+                upload_errors = _upload_attachments(session['token'], email_id, files)
 
             if email_id and forward_email_id:
                 for attachment in forwarded_attachments:
@@ -626,7 +684,13 @@ def compose():
                     except Exception:
                         forward_copy_failed = True
 
-            if forward_copy_failed:
+            if upload_errors:
+                flash(
+                    'Email sent, but these attachments were rejected: '
+                    + '; '.join(upload_errors),
+                    'warning'
+                )
+            elif forward_copy_failed:
                 flash('Email sent, but one or more forwarded attachments could not be copied.', 'warning')
             else:
                 flash('Email sent successfully!', 'success')
@@ -639,6 +703,7 @@ def compose():
             flash(str(e), 'error')
             return render_template(
                 'compose.html',
+                **_attachment_policy(),
                 to=to,
                 cc=cc,
                 subject=subject,
@@ -665,6 +730,7 @@ def compose():
 
     return render_template(
         'compose.html',
+        **_attachment_policy(),
         to=to,
         cc=cc,
         subject=subject,
